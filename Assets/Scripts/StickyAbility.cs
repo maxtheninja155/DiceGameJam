@@ -67,6 +67,13 @@ public class StickyAbility : MonoBehaviour
         Rigidbody dieRb = die.GetComponent<Rigidbody>();
         if (dieRb == null) return;
 
+        if (die.GetComponent<SpringJoint>() != null)
+        {
+            Debug.LogError("This die is already being rigged! Choose the other die.");
+            // We return here so we don't use up an ability charge or reset the anchor.
+            return;
+        }
+
         // Find the closest face transform on the die to our hit point
         Transform closestFace = null;
         float minDistance = float.MaxValue;
@@ -81,6 +88,8 @@ public class StickyAbility : MonoBehaviour
         }
 
         if (closestFace == null) return;
+
+        die.StartRigging();
 
         // --- Create and Configure the Spring Joint ---
         SpringJoint joint = dieRb.gameObject.AddComponent<SpringJoint>();

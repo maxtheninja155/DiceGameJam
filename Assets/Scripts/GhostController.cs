@@ -20,9 +20,9 @@ public class GhostController : MonoBehaviour
     [Header("Input Settings")]
     public KeyCode crouchKey = KeyCode.LeftControl;
     public KeyCode timeFreezeKey = KeyCode.T;
-    public KeyCode rollDiceKey = KeyCode.R;
     public KeyCode setInitStickyAbilityKey = KeyCode.Mouse0;
     public KeyCode setFinalStickyAbilityKey = KeyCode.Mouse1;
+    public KeyCode repelKey = KeyCode.E;
 
     private bool isCrouching;
 
@@ -30,6 +30,7 @@ public class GhostController : MonoBehaviour
     [Header("Ability Settings")]
     public float timeFreezeMaximumDuration = 5.0f;
     [SerializeField] private StickyAbility stickyAbility; // Reference to the StickyAbility script
+    [SerializeField] private RepulsionAbility repulsionAbility; // NEW
 
 
     // --- Private Variables ---
@@ -137,20 +138,16 @@ public class GhostController : MonoBehaviour
                     Ray cameraRay = new Ray(cameraTransform.position, cameraTransform.forward);
                     stickyAbility.TryAttachSpringToDie(cameraRay);
                 }
-            }
-        }
 
-        // --- 3. REROLL LOGIC ---
-        // This block handles the input for rerolling the dice.
-        if (Input.GetKeyDown(rollDiceKey))
-        {
-            // You can only reroll when the previous roll is finished (in the Results state)
-            if (GameManager.Instance.GetGameState() == GameManager.GameState.Results)
-            {
-                GameManager.Instance.ReRollDice();
+                // --- REPULSION ABILITY INPUT ---
+                if (Input.GetKeyDown(repelKey))
+                {
+                    Ray cameraRay = new Ray(cameraTransform.position, cameraTransform.forward);
+                    repulsionAbility.TryMarkFaceForRepulsion(cameraRay);
+                }
             }
         }
-            }
+    }
 
 
 }

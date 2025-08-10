@@ -12,16 +12,31 @@ public class GameManager : MonoBehaviour
         else { Instance = this; }
     }
 
+    [SerializeField] private FriendlyGambler friendlyGambler;
+    [SerializeField] private UIManager uiManager;
+
+
     [SerializeField] private List<DiceController> diceControllers = new List<DiceController>();
     [SerializeField] private GameState gameState; // Private but visible in Inspector for debugging
 
+    [Header("Round Timing")]
+    public float roundEndTime = 10.0f; // Total time from results to next roll
+    [Range(0f, 1f)]
+    public float waitOnTableRatio = 0.6f; // e.g., 60% of roundEndTime (6s)
+    [Range(0f, 1f)]
+    public float floatDurationRatio = 0.2f; // e.g., 20% of roundEndTime (2s)
+    // The final "wait in air" time is the remaining 20% (2s)
+
+    private float roundEndTimer;
+    private bool hasInitiatedFloat;
+
     private float timeFreezeTimer;
 
-    private bool hasUsedStickyAbilityThisRound;
-    public bool CanUseStickyAbility() => !hasUsedStickyAbilityThisRound;
+    private int stickyUsesRemaining;
+    public bool CanUseStickyAbility() => stickyUsesRemaining > 0;
     public GameState GetGameState() => gameState; // Public getter
 
-    public enum GameState { Ready, Rolling, Results, TimeFreeze }
+    public enum GameState { Ready, Rolling, Results, TimeFreeze, End }
 
     void Start()
     {
@@ -52,6 +67,34 @@ public class GameManager : MonoBehaviour
                 SetGameState(GameState.Rolling); // Return to rolling state
             }
         }
+
+        if (gameState == GameState.Results)
+        {
+            roundEndTimer -= Time.deltaTime;
+
+            // --- Calculate the time thresholds ---
+            // When should the float START? After the "wait on table" time is over.
+            float floatStartTime = roundEndTime * (1.0f - waitOnTableRatio);
+            // How long should the float animation take?
+            float floatDuration = roundEndTime * floatDurationRatio;
+
+            // --- Trigger the float at the correct time ---
+            if (!hasInitiatedFloat && roundEndTimer <= floatStartTime)
+            {
+                foreach (DiceController die in diceControllers)
+                {
+                    // Tell the die to start floating and how long it has to get there.
+                    die.StartFloatingBack(floatDuration);
+                }
+                hasInitiatedFloat = true;
+            }
+
+            // --- Start the next round when the total time is up ---
+            if (roundEndTimer <= 0)
+            {
+                ReRollDice();
+            }
+        }
     }
 
     public void SetGameState(GameState newState)
@@ -66,23 +109,87 @@ public class GameManager : MonoBehaviour
                 UnfreezeDice(); // Ensure dice are not kinematic before rolling
                 break;
             case GameState.Results:
+                roundEndTimer = roundEndTime; // Reset the timer for the next round
                 CalculateResults();
                 break;
             case GameState.TimeFreeze:
                 FreezeDice();
+                break;
+            case GameState.End:
+                // Handle game over logic here, add a function to detect if 
+                    // the player has been caught cheating or not (Win or Loss?).
                 break;
         }
     }
 
     public void CalculateResults()
     {
+
+        if (friendlyGambler == null)
+        {
+            Debug.LogError("FriendlyGambler reference not set in GameManager!");
+            return;
+        }
+
+        int[] diceResults = new int[diceControllers.Count];
+        int diceTotal = 0;
+
         // This method can be used to calculate the results based on the top faces of the dice
         foreach (DiceController die in diceControllers)
         {
-            // Ensure any spring joints are removed before calculating results
             int topFace = die.GetTopFace();
-            Debug.Log($"{die.name} shows: {topFace}");
+            diceResults[diceControllers.IndexOf(die)] = topFace;
+            diceTotal += topFace;
         }
+
+        if (diceResults.Length == 2)
+        {
+            SuspicionSystem.Instance.AssessRoll(diceResults[0], diceResults[1]);
+        }
+
+        FriendlyGambler.BetType playerBet = friendlyGambler.CurrentBet;
+        bool didWin = false;
+
+        // Check the outcome based on the gambler's bet
+        switch (playerBet)
+        {
+            case FriendlyGambler.BetType.NoBet:
+                Debug.LogWarning("No bet was made by the gambler. A bet will be made when the die settle");
+                break;
+            case FriendlyGambler.BetType.Over7:
+                if (diceTotal > 7) didWin = true;
+                break;
+            case FriendlyGambler.BetType.Under7:
+                if (diceTotal < 7) didWin = true;
+                break;
+            case FriendlyGambler.BetType.Exactly7:
+                if (diceTotal == 7) didWin = true;
+                break;
+        }
+
+        // Print the final result to the console
+        Debug.Log($"--- ROUND OVER ---");
+        if (playerBet != FriendlyGambler.BetType.NoBet)
+            Debug.Log($"Gambler Bet: {playerBet}");
+        uiManager.UpdateDiceOutcomeText(diceTotal);
+        if (playerBet != FriendlyGambler.BetType.NoBet)
+        {
+            if (didWin)
+            {
+                Debug.Log("<color=green>RESULT: The gambler won! Good job rigging.</color>");
+                friendlyGambler.winsCount++;
+                uiManager.UpdateWinsCountText(friendlyGambler.winsCount);
+            }
+            else
+            {
+                Debug.Log("<color=red>RESULT: The gambler lost! Try again.</color>");
+            }
+        }
+
+        friendlyGambler.MakeBet();
+        
+        uiManager.UpdateOutcomeText(friendlyGambler.CurrentBet);
+        
     }
 
     public void ReRollDice()
@@ -90,11 +197,14 @@ public class GameManager : MonoBehaviour
         // Can only reroll from the Ready or Results states
         if (gameState != GameState.Ready && gameState != GameState.Results) return;
 
-        hasUsedStickyAbilityThisRound = false;
+        hasInitiatedFloat = false;
+
+        stickyUsesRemaining = 2;
 
         SetGameState(GameState.Rolling);
         foreach (DiceController die in diceControllers)
         {
+            die.ResetRepulsion();
             die.RollDice();
         }
     }
@@ -143,6 +253,9 @@ public class GameManager : MonoBehaviour
 
     public void NotifyStickyAbilityUsed()
     {
-        hasUsedStickyAbilityThisRound = true;
+        if (stickyUsesRemaining > 0)
+        {
+            stickyUsesRemaining--;
+        }
     }
 }

@@ -395,6 +395,7 @@ MonoBehaviour:
   torqueForce: 2
   startPosition: {fileID: 7794150128869103793}
   settleTimeThreshold: 0.5
+  reducedBounciness: 0.3
   sideTransforms:
   - {fileID: 3639360144235111713}
   - {fileID: 2953105105752867036}
@@ -406,6 +407,7 @@ MonoBehaviour:
   isGhostDie: 0
   storedVelocity: {x: 0, y: 0, z: 0}
   storedAngularVelocity: {x: 0, y: 0, z: 0}
+  settlingVelocityThreshold: 0.5
 --- !u!54 &7884055341013994691
 Rigidbody:
   m_ObjectHideFlags: 0
