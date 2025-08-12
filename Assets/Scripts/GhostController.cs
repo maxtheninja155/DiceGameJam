@@ -149,7 +149,7 @@ public class GhostController : MonoBehaviour
                 if (Input.GetKeyDown(repelKey))
                 {
                     Ray cameraRay = new Ray(cameraTransform.position, cameraTransform.forward);
-                    repulsionAbility.TryMarkFaceForRepulsion(cameraRay);
+                    repulsionAbility.TryMarkFaceForRepulsion(cameraRay, PlayerGamblerController.clickableLayers);
                 }
             }
         }

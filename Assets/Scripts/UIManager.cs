@@ -92,6 +92,7 @@ public class UIManager : MonoBehaviour
         isPaused = false;
         Time.timeScale = 1f; // Resume normal time
         crosshairImg.SetActive(true); // Show the crosshair again
+        inGameHUDPanel.SetActive(true); // Show the in-game HUD
         pausePanel.SetActive(false);
         settingsPanel.SetActive(false);
         howToPlayPanel.SetActive(false);
@@ -165,9 +166,8 @@ public class UIManager : MonoBehaviour
 
     public void OnEndlessModeClicked()
     {
+        Time.timeScale = 1f;
         GameManager.Instance.StartEndlessMode();
-        HideEndScreens();
-        inGameHUDPanel?.SetActive(true);
     }
 
     // NEW: A helper function to easily hide both end screens.

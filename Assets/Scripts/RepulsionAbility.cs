@@ -39,9 +39,9 @@ public class RepulsionAbility : MonoBehaviour
         }
     }
 
-    public void TryMarkFaceForRepulsion(Ray ray)
+    public void TryMarkFaceForRepulsion(Ray ray, LayerMask layersToCollideWith)
     {
-        if (Physics.Raycast(ray, out RaycastHit hit))
+        if (Physics.Raycast(ray, out RaycastHit hit, 10f , layersToCollideWith))
         {
             if (hit.collider.CompareTag("Die"))
             {

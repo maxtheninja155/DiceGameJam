@@ -177,27 +177,46 @@ public class GameManager : MonoBehaviour
         Debug.Log("Astrally projecting OUT of body...");
         playerObject.GetComponent<PlayerGamblerController>().enabled = false;
 
-        ghostObject.SetActive(true);
-        ghostCamera.transform.position = playerCamera.transform.position;
-        ghostCamera.transform.rotation = playerCamera.transform.rotation;
+        // --- NEW: Rotation Syncing Logic ---
+        // Get the final rotation of the player's camera.
+        Quaternion playerLookRotation = playerCamera.transform.rotation;
 
+        // Decompose the player's look rotation into horizontal (body) and vertical (head) parts.
+        // The horizontal rotation (left/right) is the rotation around the Y-axis.
+        Quaternion ghostBodyRotation = Quaternion.Euler(0, playerLookRotation.eulerAngles.y, 0);
+        // The vertical rotation (up/down) is the rotation around the X-axis.
+        Quaternion ghostHeadRotation = Quaternion.Euler(playerLookRotation.eulerAngles.x, 0, 0);
+
+        // --- Prepare the Ghost ---
+        ghostObject.SetActive(true);
+        // Apply the synced rotations BEFORE enabling the cameras.
+        ghostObject.transform.rotation = ghostBodyRotation;
+        ghostCamera.transform.localRotation = ghostHeadRotation;
+
+        // Position the ghost camera exactly where the player's was to start the transition.
+        ghostCamera.transform.position = playerCamera.transform.position;
+
+        // Immediately switch active cameras for a seamless transition.
         playerCamera.enabled = false;
         ghostCamera.enabled = true;
 
+        // --- The rest of the coroutine is unchanged ---
         Vector3 startPos = ghostCamera.transform.position;
         Vector3 endPos = ghostObject.transform.position;
 
         float elapsedTime = 0f;
         while (elapsedTime < transitionDuration)
         {
+            // Lerp the GHOST'S camera from the player's viewpoint to its own starting spot.
             ghostCamera.transform.position = Vector3.Lerp(startPos, endPos, elapsedTime / transitionDuration);
             elapsedTime += Time.deltaTime;
             yield return null;
         }
 
+        // Finalize transition: Enable the ghost controller.
         ghostObject.GetComponent<GhostController>().enabled = true;
 
-        // FIXED: The logic to roll the dice now happens here, AFTER the transition.
+        // Now, roll the dice.
         hasInitiatedFloat = false;
         stickyUsesRemaining = 2;
         SetGameState(GameState.Rolling);
@@ -207,6 +226,7 @@ public class GameManager : MonoBehaviour
             die.RollDice();
         }
     }
+
 
     private IEnumerator ReturnToBodyCoroutine()
     {
@@ -368,6 +388,7 @@ public class GameManager : MonoBehaviour
     // NEW: This method is called by the UIManager to start the endless run.
     public void StartEndlessMode()
     {
+        playerObject.GetComponent<PlayerGamblerController>().enabled = true;
         // Set the flag
         IsEndlessMode = true;
 
@@ -377,6 +398,7 @@ public class GameManager : MonoBehaviour
         // Hide the win screen and start a new round.
         uiManager.HideEndScreens(); // We will add this helper method to UIManager
         Time.timeScale = 1f; // Make sure time is running
+        uiManager.ResumeGame();
         StartNewRound();
     }
 }

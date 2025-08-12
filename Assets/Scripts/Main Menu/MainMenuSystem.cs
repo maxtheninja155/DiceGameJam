@@ -30,8 +30,8 @@ public class MainMenuSystem : MonoBehaviour
 
     public void StartGame()
     {
-        GameManager.SetEndlessMode(false);
-
+        // NOTE: Make sure your main game scene is named "MainGame"
+        // and has been added to the build settings (File > Build Settings).
         SceneManager.LoadScene("MainGame");
     }
 
