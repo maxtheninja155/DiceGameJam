@@ -1,9 +1,11 @@
-// Create a new script named SuspicionSystem.cs
+// In SuspicionSystem.cs
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 public class SuspicionSystem : MonoBehaviour
 {
-    // --- Singleton Pattern for easy access ---
+    // --- Singleton Pattern ---
     public static SuspicionSystem Instance { get; private set; }
     private void Awake()
     {
@@ -11,71 +13,201 @@ public class SuspicionSystem : MonoBehaviour
         else { Instance = this; }
     }
 
-    // Assign your UIManager in the Inspector
     [SerializeField] private UIManager uiManager;
 
-    // The different levels of suspicion
-    public enum SuspicionLevel
-    {
-        NotSuspicious,
-        CuriousGlance,
-        Suspicious,
-        GettingAngry,
-        Accusatory,
-        CaughtCheating
-    }
-    
+    public enum SuspicionLevel { NotSuspicious, CuriousGlance, Suspicious, GettingAngry, Accusatory, CaughtCheating }
     private SuspicionLevel currentSuspicionLevel;
 
-    // Variables to remember the last roll's outcome
+    // --- State Tracking Variables ---
     private int lastDie1Result = 0;
     private int lastDie2Result = 0;
 
+    // Streak Tracking
+    private int consecutiveWins = 0;
+    private int consecutiveLosses = 0;
+    private List<float> winStreakWagerPercentages = new List<float>();
+    private List<float> lossStreakWagerPercentages = new List<float>();
+
+    // Bet Consistency Tracking
+    private PlayerData.BetType lastBetType = PlayerData.BetType.NoBet;
+    private int consecutiveBetTypeCount = 0;
+
+    // "Exactly 7" Win History
+    private Queue<bool> recentExactly7Wins = new Queue<bool>();
+    private const int EXACTLY_7_HISTORY_LENGTH = 6;
+
     void Start()
     {
-        // Initialize the system at the start of the game
         currentSuspicionLevel = SuspicionLevel.NotSuspicious;
-        // Update the UI with the starting level
         uiManager.UpdateSuspicionText(currentSuspicionLevel);
     }
 
-    // This is called by the GameManager after a roll is complete.
-    public void AssessRoll(int die1Result, int die2Result)
+    // This is now the main entry point, called by GameManager.
+    public void AssessRound(PlayerData.BetType bet, int wager, int totalGold, bool didWin, int die1, int die2)
     {
-        // --- Suspicion Check: Repeat Roll ---
-        // Check if the current roll is an exact match of the last one (order doesn't matter)
-        bool isRepeatRoll = (die1Result == lastDie1Result && die2Result == lastDie2Result) ||
-                            (die1Result == lastDie2Result && die2Result == lastDie1Result);
+        float wagerPercentage = (float)wager / totalGold;
 
-        if (isRepeatRoll && lastDie1Result != 0) // Don't trigger on the very first roll
+        // --- 1. Update all historical data based on the round's outcome ---
+        UpdateStreakData(didWin, wagerPercentage);
+        UpdateBetConsistencyData(bet);
+        UpdateExactly7History(didWin, bet);
+
+        // --- 2. Run all suspicion checks ---
+        CheckWinningStreaks();
+        CheckLosingStreaks();
+        CheckBetConsistency();
+        CheckExactly7Jackpot();
+        CheckForRepeatRoll(die1, die2); // The original check
+
+        // --- 3. Update dice history for the next round ---
+        lastDie1Result = die1;
+        lastDie2Result = die2;
+    }
+
+    // --- Update Methods ---
+    private void UpdateStreakData(bool didWin, float percentage)
+    {
+        if (didWin)
+        {
+            consecutiveWins++;
+            consecutiveLosses = 0;
+            winStreakWagerPercentages.Add(percentage);
+            lossStreakWagerPercentages.Clear();
+        }
+        else
+        {
+            consecutiveLosses++;
+            consecutiveWins = 0;
+            lossStreakWagerPercentages.Add(percentage);
+            winStreakWagerPercentages.Clear();
+        }
+    }
+
+    private void UpdateBetConsistencyData(PlayerData.BetType bet)
+    {
+        if (bet == lastBetType && bet != PlayerData.BetType.NoBet)
+        {
+            consecutiveBetTypeCount++;
+        }
+        else
+        {
+            consecutiveBetTypeCount = 1;
+        }
+        lastBetType = bet;
+    }
+
+    private void UpdateExactly7History(bool didWin, PlayerData.BetType bet)
+    {
+        recentExactly7Wins.Enqueue(didWin && bet == PlayerData.BetType.Exactly7);
+        if (recentExactly7Wins.Count > EXACTLY_7_HISTORY_LENGTH)
+        {
+            recentExactly7Wins.Dequeue();
+        }
+    }
+
+    // --- Check Methods ---
+    private void CheckWinningStreaks()
+    {
+        if (consecutiveWins == 3 && winStreakWagerPercentages.All(p => p == 1.0f))
+        {
+            Debug.LogWarning("SUSPICION EVENT: 3 wins in a row at 100% wager!");
+            IncreaseSuspicion(2);
+            consecutiveWins = 0; winStreakWagerPercentages.Clear(); // Reset streak after triggering
+        }
+        else if (consecutiveWins == 4 && winStreakWagerPercentages.All(p => p == 0.5f))
+        {
+            Debug.LogWarning("SUSPICION EVENT: 4 wins in a row at 50% wager!");
+            IncreaseSuspicion(2);
+            consecutiveWins = 0; winStreakWagerPercentages.Clear();
+        }
+        else if (consecutiveWins == 5 && winStreakWagerPercentages.All(p => p == 0.25f))
+        {
+            Debug.LogWarning("SUSPICION EVENT: 5 wins in a row at 25% wager!");
+            IncreaseSuspicion(2);
+            consecutiveWins = 0; winStreakWagerPercentages.Clear();
+        }
+    }
+
+    private void CheckLosingStreaks()
+    {
+        if (consecutiveLosses == 2 && lossStreakWagerPercentages.All(p => p == 0.25f))
+        {
+            Debug.Log("<color=lightblue>SUSPICION DECREASED:</color> Lost 2 in a row at 25% wager.");
+            DecreaseSuspicion(2);
+            consecutiveLosses = 0; lossStreakWagerPercentages.Clear();
+        }
+        // Check for a single 50% loss
+        else if (consecutiveLosses > 0 && lossStreakWagerPercentages.Last() == 0.5f)
+        {
+            Debug.Log("<color=lightblue>SUSPICION DECREASED:</color> Lost a round at 50% wager.");
+            DecreaseSuspicion(2);
+            consecutiveLosses = 0; lossStreakWagerPercentages.Clear();
+        }
+    }
+
+    private void CheckBetConsistency()
+    {
+        if (consecutiveBetTypeCount >= 4)
+        {
+            Debug.LogWarning("SUSPICION EVENT: Same bet type chosen 4 times in a row!");
+            IncreaseSuspicion(1);
+            consecutiveBetTypeCount = 0; // Reset counter
+        }
+    }
+
+    private void CheckExactly7Jackpot()
+    {
+        if (recentExactly7Wins.Count(isWin => isWin) >= 2)
+        {
+            Debug.LogWarning("SUSPICION EVENT: Won 'Exactly 7' twice in the last 6 rounds!");
+            IncreaseSuspicion(4);
+            recentExactly7Wins.Clear(); // Reset history to prevent re-triggering
+        }
+    }
+
+    private void CheckForRepeatRoll(int die1, int die2)
+    {
+        bool isRepeatRoll = (die1 == lastDie1Result && die2 == lastDie2Result) || (die1 == lastDie2Result && die2 == lastDie1Result);
+        if (isRepeatRoll && lastDie1Result != 0)
         {
             Debug.LogWarning("SUSPICION EVENT: Exact same roll as last time!");
-            IncreaseSuspicion();
+            IncreaseSuspicion(1);
         }
-
-        // --- Update History ---
-        // Remember this roll's results for the next round's check.
-        lastDie1Result = die1Result;
-        lastDie2Result = die2Result;
     }
 
-    private void IncreaseSuspicion()
+    // --- Modify Suspicion Level ---
+    public void IncreaseSuspicion(int amount)
     {
-        // Don't increase if we've already caught the player
         if (currentSuspicionLevel == SuspicionLevel.CaughtCheating) return;
-
-        // Move to the next level
-        currentSuspicionLevel++;
-        Debug.Log("Suspicion has increased to: " + currentSuspicionLevel);
-
-        // Tell the UI to update
+        currentSuspicionLevel = (SuspicionLevel)Mathf.Min((int)currentSuspicionLevel + amount, (int)SuspicionLevel.CaughtCheating);
         uiManager.UpdateSuspicionText(currentSuspicionLevel);
-
-        // Check for game over condition
         if (currentSuspicionLevel == SuspicionLevel.CaughtCheating)
         {
-            Debug.LogError("GAME OVER: You have been caught cheating!");
             GameManager.Instance.SetGameState(GameManager.GameState.End);
         }
+    }
+
+    public void DecreaseSuspicion(int amount)
+    {
+        if (currentSuspicionLevel == SuspicionLevel.NotSuspicious) return;
+        currentSuspicionLevel = (SuspicionLevel)Mathf.Max((int)currentSuspicionLevel - amount, (int)SuspicionLevel.NotSuspicious);
+        uiManager.UpdateSuspicionText(currentSuspicionLevel);
+    }
+
+    public void ResetSuspicion()
+    {
+        currentSuspicionLevel = SuspicionLevel.NotSuspicious;
+        lastDie1Result = 0;
+        lastDie2Result = 0;
+        consecutiveWins = 0;
+        consecutiveLosses = 0;
+        winStreakWagerPercentages.Clear();
+        lossStreakWagerPercentages.Clear();
+        lastBetType = PlayerData.BetType.NoBet;
+        consecutiveBetTypeCount = 0;
+        recentExactly7Wins.Clear();
+
+        // Update the UI to reflect the reset
+        uiManager.UpdateSuspicionText(currentSuspicionLevel);
     }
 }

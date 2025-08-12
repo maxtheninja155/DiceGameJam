@@ -45,6 +45,13 @@ public class DiceController : MonoBehaviour
     [SerializeField] private float settlingVelocityThreshold = 0.8f;
 
 
+    [Header("Sound Settings")]
+    [SerializeField] private float collisionSoundCooldown = 0.1f;
+    [SerializeField] private float minImpactForceForSound = 1.0f;
+    [SerializeField] private float maxImpactForceForVolume = 15.0f;
+
+    private float timeSinceLastCollisionSound;
+
     public enum DiceState { Idle, Rolling, Stopped }
 
     void Awake()
@@ -52,6 +59,11 @@ public class DiceController : MonoBehaviour
         rb = GetComponent<Rigidbody>();
         col = GetComponent<Collider>();
         originalBounciness = col.material.bounciness;
+    }
+
+    private void Update()
+    {
+        timeSinceLastCollisionSound += Time.deltaTime;
     }
 
     void FixedUpdate()
@@ -255,5 +267,27 @@ public class DiceController : MonoBehaviour
         // Ensure it ends at the exact destination
         transform.position = endPos;
         transform.rotation = endRot;
+    }
+
+    // NEW: This method is called automatically by Unity's physics engine.
+    private void OnCollisionEnter(Collision collision)
+    {
+        // Check if the cooldown is over and if the impact was hard enough.
+        if (timeSinceLastCollisionSound >= collisionSoundCooldown)
+        {
+            float impactVelocity = collision.relativeVelocity.magnitude;
+
+            if (impactVelocity > minImpactForceForSound)
+            {
+                // Map the impact force to a volume level between 0 and 1.
+                float volume = Mathf.InverseLerp(0, maxImpactForceForVolume, impactVelocity);
+
+                // Play a RANDOM sound from the DiceCollide group.
+                SoundManager.PlaySound(SoundType.DiceCollide, volume);
+
+                // Reset the cooldown timer.
+                timeSinceLastCollisionSound = 0f;
+            }
+        }
     }
 }

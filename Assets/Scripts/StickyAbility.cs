@@ -18,12 +18,12 @@ public class StickyAbility : MonoBehaviour
     private Vector3 tableAnchorPoint;
 
     // Called from GhostController on Left-Click
-    public void TrySetAnchorPoint(Ray ray)
+    public void TrySetAnchorPoint(Ray ray, LayerMask layersToCollideWith)
     {
         // Can't set a new anchor if one is already set
         if (anchorIsSet) return;
 
-        if (Physics.Raycast(ray, out RaycastHit hit))
+        if (Physics.Raycast(ray, out RaycastHit hit, 100f, layersToCollideWith))
         {
             // Check if we hit the table (make sure your table has the "Table" tag)
             if (hit.collider.CompareTag("Table"))
@@ -43,12 +43,12 @@ public class StickyAbility : MonoBehaviour
     }
 
     // Called from GhostController on Right-Click
-    public void TryAttachSpringToDie(Ray ray)
+    public void TryAttachSpringToDie(Ray ray, LayerMask layersToCollideWith)
     {
         // Can only attach a spring if an anchor has been set first
         if (!anchorIsSet) return;
 
-        if (Physics.Raycast(ray, out RaycastHit hit))
+        if (Physics.Raycast(ray, out RaycastHit hit, 100f, layersToCollideWith))
         {
             // Check if we hit a die (make sure your dice have the "Die" tag)
             if (hit.collider.CompareTag("Die"))

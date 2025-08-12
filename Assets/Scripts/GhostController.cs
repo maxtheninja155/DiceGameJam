@@ -5,11 +5,14 @@ using UnityEngine.InputSystem.LowLevel;
 public class GhostController : MonoBehaviour
 {
     [SerializeField] private GameManager gameManager;
+    [SerializeField] private PlayerGamblerController PlayerGamblerController;
 
     // --- Public Variables for tweaking in the Inspector ---
     public float speed = 5.0f;
     public float mouseSensitivity = 100.0f;
     public Transform cameraTransform; // Assign your child camera to this in the Inspector
+
+    private bool movementEnabled = true;
 
     [Header("Crouch Settings")]
     public Transform objectToCrouch; // Assign your player's Camera or body transform
@@ -65,15 +68,18 @@ public class GhostController : MonoBehaviour
 
         // --- MOVEMENT (Keyboard) ---
 
-        // Get keyboard input
-        float moveX = Input.GetAxis("Horizontal"); // A/D keys
-        float moveZ = Input.GetAxis("Vertical");   // W/S keys
+        if (movementEnabled)
+        {
+            // Get keyboard input
+            float moveX = Input.GetAxis("Horizontal"); // A/D keys
+            float moveZ = Input.GetAxis("Vertical");   // W/S keys
 
-        // Create a movement vector based on the direction the player is facing
-        Vector3 move = transform.right * moveX + transform.forward * moveZ;
+            // Create a movement vector based on the direction the player is facing
+            Vector3 move = transform.right * moveX + transform.forward * moveZ;
 
-        // Apply the movement to the GhostPlayer's position
-        transform.Translate(move * speed * Time.deltaTime, Space.World);
+            // Apply the movement to the GhostPlayer's position
+            transform.Translate(move * speed * Time.deltaTime, Space.World);
+        }
 
         // --- CROUCHING ---
         // When the crouch key is pressed, set the state to crouching
@@ -129,14 +135,14 @@ public class GhostController : MonoBehaviour
                 if (Input.GetKeyDown(setInitStickyAbilityKey))
                 {
                     Ray cameraRay = new Ray(cameraTransform.position, cameraTransform.forward);
-                    stickyAbility.TrySetAnchorPoint(cameraRay);
+                    stickyAbility.TrySetAnchorPoint(cameraRay, PlayerGamblerController.clickableLayers);
                 }
 
                 // On Right-Click, try to attach the spring to a die
                 if (Input.GetKeyDown(setFinalStickyAbilityKey))
                 {
                     Ray cameraRay = new Ray(cameraTransform.position, cameraTransform.forward);
-                    stickyAbility.TryAttachSpringToDie(cameraRay);
+                    stickyAbility.TryAttachSpringToDie(cameraRay, PlayerGamblerController.clickableLayers);
                 }
 
                 // --- REPULSION ABILITY INPUT ---
@@ -149,5 +155,9 @@ public class GhostController : MonoBehaviour
         }
     }
 
+    public void SetMovementEnabled(bool isEnabled)
+    {
+        movementEnabled = isEnabled;
+    }
 
 }

@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -11,90 +12,121 @@ public class GameManager : MonoBehaviour
         if (Instance != null && Instance != this) { Destroy(gameObject); }
         else { Instance = this; }
     }
+    public static bool IsEndlessMode { get; private set; } = false;
 
-    [SerializeField] private FriendlyGambler friendlyGambler;
+    [Header("Core References")]
     [SerializeField] private UIManager uiManager;
+    [SerializeField] private PlayerData playerData;
+    [SerializeField] private BettingManager bettingManager;
+    [SerializeField] private RepulsionAbility repulsionAbility;
 
+    [Header("Player Control")]
+    [SerializeField] private GameObject playerObject;
+    [SerializeField] private GameObject ghostObject;
+    [SerializeField] private Camera playerCamera;
+    [SerializeField] private Camera ghostCamera;
+    [SerializeField] private float transitionDuration = 1.5f;
 
+    private Vector3 playerCameraOriginalLocalPos;
     [SerializeField] private List<DiceController> diceControllers = new List<DiceController>();
-    [SerializeField] private GameState gameState; // Private but visible in Inspector for debugging
+    [SerializeField] private GameState gameState;
 
     [Header("Round Timing")]
-    public float roundEndTime = 10.0f; // Total time from results to next roll
-    [Range(0f, 1f)]
-    public float waitOnTableRatio = 0.6f; // e.g., 60% of roundEndTime (6s)
-    [Range(0f, 1f)]
-    public float floatDurationRatio = 0.2f; // e.g., 20% of roundEndTime (2s)
-    // The final "wait in air" time is the remaining 20% (2s)
+    public float roundEndTime = 10.0f;
+    [Range(0f, 1f)] public float waitOnTableRatio = 0.6f;
+    [Range(0f, 1f)] public float floatDurationRatio = 0.2f;
 
     private float roundEndTimer;
     private bool hasInitiatedFloat;
-
     private float timeFreezeTimer;
-
     private int stickyUsesRemaining;
+
     public bool CanUseStickyAbility() => stickyUsesRemaining > 0;
-    public GameState GetGameState() => gameState; // Public getter
+    public GameState GetGameState() => gameState;
 
     public enum GameState { Ready, Rolling, Results, TimeFreeze, End }
 
     void Start()
     {
-        // Find all dice controllers in the scene at the start
-        diceControllers = Object.FindObjectsByType<DiceController>(FindObjectsSortMode.None).ToList();
-        SetGameState(GameState.Ready);
-        ReRollDice(); // Automatically roll the dice when the game starts
+        SetEndlessMode(false);
+
+        playerObject.GetComponent<PlayerGamblerController>().enabled = true;
+        playerCamera.enabled = true;
+        ghostObject.SetActive(false);
+        diceControllers = FindObjectsByType<DiceController>(FindObjectsSortMode.None).ToList();
+        playerCameraOriginalLocalPos = playerCamera.transform.localPosition;
+
+
+        // The coroutine is no longer needed, we can start the first round directly.
+        StartNewRound();
     }
 
     void Update()
     {
-        // NEW: Check if the rolling phase is over
         if (gameState == GameState.Rolling)
         {
-            // If all dice have stopped rolling, change the state to Results.
             if (diceControllers.All(die => die.CurrentState == DiceController.DiceState.Stopped))
             {
                 SetGameState(GameState.Results);
             }
         }
-
-        // Handle the time freeze countdown
-        if (gameState == GameState.TimeFreeze)
+        else if (gameState == GameState.TimeFreeze)
         {
             timeFreezeTimer -= Time.deltaTime;
             if (timeFreezeTimer <= 0)
             {
-                SetGameState(GameState.Rolling); // Return to rolling state
+                SetGameState(GameState.Rolling);
             }
         }
-
-        if (gameState == GameState.Results)
+        else if (gameState == GameState.Results)
         {
             roundEndTimer -= Time.deltaTime;
-
-            // --- Calculate the time thresholds ---
-            // When should the float START? After the "wait on table" time is over.
             float floatStartTime = roundEndTime * (1.0f - waitOnTableRatio);
-            // How long should the float animation take?
             float floatDuration = roundEndTime * floatDurationRatio;
 
-            // --- Trigger the float at the correct time ---
             if (!hasInitiatedFloat && roundEndTimer <= floatStartTime)
             {
                 foreach (DiceController die in diceControllers)
                 {
-                    // Tell the die to start floating and how long it has to get there.
                     die.StartFloatingBack(floatDuration);
                 }
                 hasInitiatedFloat = true;
             }
 
-            // --- Start the next round when the total time is up ---
             if (roundEndTimer <= 0)
             {
-                ReRollDice();
+                StartNewRound();
             }
         }
+    }
+
+    void LateUpdate()
+    {
+        // Check which camera is currently active and sync the listener's position to it.
+        if (ghostCamera.enabled)
+        {
+            // If the ghost is active, the listener should be where the ghost is.
+            this.transform.position = ghostCamera.transform.position;
+            this.transform.rotation = ghostCamera.transform.rotation;
+        }
+        else
+        {
+            // Otherwise, the listener should be where the player is.
+            this.transform.position = playerCamera.transform.position;
+            this.transform.rotation = playerCamera.transform.rotation;
+        }
+    }
+
+    public void StartNewRound()
+    {
+        SetGameState(GameState.Ready);
+        bettingManager.StartBettingPhase();
+        uiManager.UpdateGoldText(playerData.currentGold);
+    }
+
+    public void StartRollingPhase()
+    {
+        StartCoroutine(AstralProjectOutCoroutine());
     }
 
     public void SetGameState(GameState newState)
@@ -105,102 +137,69 @@ public class GameManager : MonoBehaviour
 
         switch (newState)
         {
-            case GameState.Rolling:
-                UnfreezeDice(); // Ensure dice are not kinematic before rolling
-                break;
             case GameState.Results:
-                roundEndTimer = roundEndTime; // Reset the timer for the next round
-                CalculateResults();
+                roundEndTimer = roundEndTime;
+                StartCoroutine(ReturnToBodyCoroutine());
                 break;
             case GameState.TimeFreeze:
+                SoundManager.PlaySound(SoundType.AbilitySFX, 0, 1.5f);
+                SoundManager.PlayMusicStinger(SoundType.BackgroundMusic, 0.5f);
                 FreezeDice();
                 break;
+            case GameState.Rolling:
+                SoundManager.StopMusicStinger();
+                UnfreezeDice();
+                break;
             case GameState.End:
-                // Handle game over logic here, add a function to detect if 
-                    // the player has been caught cheating or not (Win or Loss?).
+                SoundManager.StopMusicStinger();
+                // This will be called if you run out of money OR if SuspicionSystem catches you.
+                Time.timeScale = 0f; // Pause the game
+                ghostObject.SetActive(false); // Make sure the ghost is hidden
+                playerObject.SetActive(true); // Make sure the player is active
+                playerCamera.enabled = true;
+                playerObject.GetComponent<PlayerGamblerController>().enabled = false; // Disable controls
+
+                // Check which end screen to show.
+                if (playerData.currentGold >= playerData.startingGold * 15)
+                {
+                    uiManager.ShowWinScreen();
+                }
+                else
+                {
+                    uiManager.ShowLoseScreen();
+                }
                 break;
         }
     }
 
-    public void CalculateResults()
+    private IEnumerator AstralProjectOutCoroutine()
     {
+        Debug.Log("Astrally projecting OUT of body...");
+        playerObject.GetComponent<PlayerGamblerController>().enabled = false;
 
-        if (friendlyGambler == null)
+        ghostObject.SetActive(true);
+        ghostCamera.transform.position = playerCamera.transform.position;
+        ghostCamera.transform.rotation = playerCamera.transform.rotation;
+
+        playerCamera.enabled = false;
+        ghostCamera.enabled = true;
+
+        Vector3 startPos = ghostCamera.transform.position;
+        Vector3 endPos = ghostObject.transform.position;
+
+        float elapsedTime = 0f;
+        while (elapsedTime < transitionDuration)
         {
-            Debug.LogError("FriendlyGambler reference not set in GameManager!");
-            return;
+            ghostCamera.transform.position = Vector3.Lerp(startPos, endPos, elapsedTime / transitionDuration);
+            elapsedTime += Time.deltaTime;
+            yield return null;
         }
 
-        int[] diceResults = new int[diceControllers.Count];
-        int diceTotal = 0;
+        ghostObject.GetComponent<GhostController>().enabled = true;
 
-        // This method can be used to calculate the results based on the top faces of the dice
-        foreach (DiceController die in diceControllers)
-        {
-            int topFace = die.GetTopFace();
-            diceResults[diceControllers.IndexOf(die)] = topFace;
-            diceTotal += topFace;
-        }
-
-        if (diceResults.Length == 2)
-        {
-            SuspicionSystem.Instance.AssessRoll(diceResults[0], diceResults[1]);
-        }
-
-        FriendlyGambler.BetType playerBet = friendlyGambler.CurrentBet;
-        bool didWin = false;
-
-        // Check the outcome based on the gambler's bet
-        switch (playerBet)
-        {
-            case FriendlyGambler.BetType.NoBet:
-                Debug.LogWarning("No bet was made by the gambler. A bet will be made when the die settle");
-                break;
-            case FriendlyGambler.BetType.Over7:
-                if (diceTotal > 7) didWin = true;
-                break;
-            case FriendlyGambler.BetType.Under7:
-                if (diceTotal < 7) didWin = true;
-                break;
-            case FriendlyGambler.BetType.Exactly7:
-                if (diceTotal == 7) didWin = true;
-                break;
-        }
-
-        // Print the final result to the console
-        Debug.Log($"--- ROUND OVER ---");
-        if (playerBet != FriendlyGambler.BetType.NoBet)
-            Debug.Log($"Gambler Bet: {playerBet}");
-        uiManager.UpdateDiceOutcomeText(diceTotal);
-        if (playerBet != FriendlyGambler.BetType.NoBet)
-        {
-            if (didWin)
-            {
-                Debug.Log("<color=green>RESULT: The gambler won! Good job rigging.</color>");
-                friendlyGambler.winsCount++;
-                uiManager.UpdateWinsCountText(friendlyGambler.winsCount);
-            }
-            else
-            {
-                Debug.Log("<color=red>RESULT: The gambler lost! Try again.</color>");
-            }
-        }
-
-        friendlyGambler.MakeBet();
-        
-        uiManager.UpdateOutcomeText(friendlyGambler.CurrentBet);
-        
-    }
-
-    public void ReRollDice()
-    {
-        // Can only reroll from the Ready or Results states
-        if (gameState != GameState.Ready && gameState != GameState.Results) return;
-
+        // FIXED: The logic to roll the dice now happens here, AFTER the transition.
         hasInitiatedFloat = false;
-
         stickyUsesRemaining = 2;
-
         SetGameState(GameState.Rolling);
         foreach (DiceController die in diceControllers)
         {
@@ -208,6 +207,106 @@ public class GameManager : MonoBehaviour
             die.RollDice();
         }
     }
+
+    private IEnumerator ReturnToBodyCoroutine()
+    {
+        Debug.Log("Returning TO body...");
+
+        GhostController ghostController = ghostObject.GetComponent<GhostController>();
+        ghostController.enabled = false;
+
+        Vector3 startPos = ghostCamera.transform.position;
+        Vector3 endPos = playerCamera.transform.parent.TransformPoint(playerCameraOriginalLocalPos);
+
+        ghostCamera.enabled = false;
+        playerCamera.enabled = true;
+
+        float elapsedTime = 0f;
+        while (elapsedTime < transitionDuration)
+        {
+            playerCamera.transform.position = Vector3.Lerp(startPos, endPos, elapsedTime / transitionDuration);
+            elapsedTime += Time.deltaTime;
+            yield return null;
+        }
+
+        playerCamera.transform.localPosition = playerCameraOriginalLocalPos;
+        ghostObject.SetActive(false);
+        playerObject.GetComponent<PlayerGamblerController>().enabled = true;
+
+        repulsionAbility.ResetAll();
+        
+        CalculateResults();
+    }
+
+    public void CalculateResults()
+    {
+        if (playerData == null)
+        {
+            Debug.LogError("PlayerData reference not set in GameManager!");
+            return;
+        }
+
+        int diceTotal = 0;
+        int[] diceResults = new int[diceControllers.Count];
+        for (int i = 0; i < diceControllers.Count; i++)
+        {
+            int topFace = diceControllers[i].GetTopFace();
+            diceResults[i] = topFace;
+            diceTotal += topFace;
+        }
+
+        PlayerData.BetType playerBet = playerData.currentBet;
+        bool didWin = false;
+
+        switch (playerBet)
+        {
+            case PlayerData.BetType.Over7: if (diceTotal > 7) didWin = true; break;
+            case PlayerData.BetType.Under7: if (diceTotal < 7) didWin = true; break;
+            case PlayerData.BetType.Exactly7: if (diceTotal == 7) didWin = true; break;
+        }
+
+        // CHANGED: Call the new, more detailed assessment method.
+        SuspicionSystem.Instance?.AssessRound(
+            playerBet,
+            playerData.currentWager,
+            playerData.currentGold + (didWin ? -playerData.currentWager : playerData.currentWager), // Pass gold *before* this round's win/loss
+            didWin,
+            diceResults[0],
+            diceResults[1]
+        );
+
+        Debug.Log($"--- ROUND OVER ---");
+        Debug.Log($"Player Bet: {playerBet} for {playerData.currentWager} gold.");
+        uiManager.UpdateDiceOutcomeText(diceTotal);
+
+        if (didWin)
+        {
+            Debug.Log("<color=green>RESULT: You won the bet!</color>");
+            playerData.currentGold += playerData.currentWager;
+            playerData.winsCount++;
+        }
+        else
+        {
+            Debug.Log("<color=red>RESULT: You lost the bet!</color>");
+            playerData.currentGold -= playerData.currentWager;
+        }
+
+        uiManager.UpdateGoldText(playerData.currentGold);
+        CheckEndGameConditions();
+    }
+    private void CheckEndGameConditions()
+    {
+        // CHANGED: The win condition is now ignored if IsEndlessMode is true.
+        if (!IsEndlessMode && playerData.currentGold >= playerData.startingGold * 15)
+        {
+            SetGameState(GameState.End);
+        }
+        else if (playerData.currentGold <= 0)
+        {
+            SetGameState(GameState.End);
+        }
+    }
+
 
     public void StartTimeFreeze(float duration)
     {
@@ -219,6 +318,8 @@ public class GameManager : MonoBehaviour
 
     private void FreezeDice()
     {
+        
+
         foreach (DiceController die in diceControllers)
         {
             Rigidbody rb = die.GetComponent<Rigidbody>();
@@ -257,5 +358,25 @@ public class GameManager : MonoBehaviour
         {
             stickyUsesRemaining--;
         }
+    }
+
+    public static void SetEndlessMode(bool isEndless)
+    {
+        IsEndlessMode = isEndless;
+    }
+
+    // NEW: This method is called by the UIManager to start the endless run.
+    public void StartEndlessMode()
+    {
+        // Set the flag
+        IsEndlessMode = true;
+
+        // Reset suspicion for the new run
+        SuspicionSystem.Instance?.ResetSuspicion();
+
+        // Hide the win screen and start a new round.
+        uiManager.HideEndScreens(); // We will add this helper method to UIManager
+        Time.timeScale = 1f; // Make sure time is running
+        StartNewRound();
     }
 }
